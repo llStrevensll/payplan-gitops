@@ -179,3 +179,11 @@ Lo que hay que preparar una vez, porque el token del job NO puede escribir en el
 - Tests siempre contra PostgreSQL real, nunca mocks de la base.
 - Commits y PRs en inglés.
 - Dinero en centavos (`int64`), nunca float.
+
+## Licencia
+
+Todos los derechos reservados. Este repositorio se publica para consulta y lectura: puedes leerlo,
+estudiarlo y citar fragmentos con atribución, pero copiarlo, modificarlo o usarlo en cualquier
+proyecto requiere permiso previo por escrito. Ver [`LICENSE`](LICENSE).
+
+Para pedir permiso, abre un issue titulado "Solicitud de licencia".

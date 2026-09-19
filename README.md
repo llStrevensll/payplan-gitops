@@ -182,8 +182,12 @@ Lo que hay que preparar una vez, porque el token del job NO puede escribir en el
 
 ## Licencia
 
-Todos los derechos reservados. Este repositorio se publica para consulta y lectura: puedes leerlo,
-estudiarlo y citar fragmentos con atribución, pero copiarlo, modificarlo o usarlo en cualquier
-proyecto requiere permiso previo por escrito. Ver [`LICENSE`](LICENSE).
+[PolyForm Noncommercial 1.0.0](LICENSE). Puedes usar, modificar y redistribuir este trabajo
+libremente **para cualquier fin no comercial**: aprender, enseñar, investigar, proyectos personales
+y organizaciones sin ánimo de lucro.
 
-Para pedir permiso, abre un issue titulado "Solicitud de licencia".
+Cualquier uso comercial requiere una licencia aparte. Para pedirla, abre un issue titulado
+"Solicitud de licencia comercial" indicando quién eres y cómo piensas usar el trabajo.
+
+PolyForm es un conjunto de licencias redactadas por abogados especializados en software, en lenguaje
+llano. No son licencias de código abierto: reservan el uso comercial al autor.

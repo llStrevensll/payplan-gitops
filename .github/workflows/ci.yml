@@ -1,0 +1,128 @@
+# Equivalente exacto del .gitlab-ci.yml, para comparar las dos plataformas lado a lado.
+# Solo corre el pipeline de la plataforma a la que empujes: hoy origin es GitLab, y este
+# workflow se activa cuando haces push al remoto "github".
+#
+# Diferencia que importa: este publica en GHCR y el de GitLab en su propio registry. El campo
+# images[].name de deploy/overlays/*/kustomization.yaml apunta a UNO de los dos; aquí está
+# configurado para GHCR.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Los tests corren siempre; build y despliegue solo cuando se lanza a mano desde la pestaña
+  # Actions, para que este repo de referencia no publique imágenes por accidente.
+  workflow_dispatch:
+
+permissions:
+  contents: write     # deploy-dev y deploy-prod escriben el tag de vuelta en el repo
+  packages: write     # publicar la imagen en GHCR
+
+jobs:
+  # Equivale al job "test" del .gitlab-ci.yml.
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: payplan
+          POSTGRES_PASSWORD: payplan
+          POSTGRES_DB: payplan
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U payplan -d payplan"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      # Aquí sí es localhost: GitHub mapea el puerto del service al runner. En GitLab el
+      # service es un contenedor aparte y se llama por su alias ("postgres").
+      DATABASE_URL: postgres://payplan:payplan@localhost:5432/payplan?sslmode=disable
+    steps:
+      # El checkout es explícito; en GitLab el runner clona solo.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Análisis estático: halla código que compila pero está mal. Sale con 1 y corta el job.
+      - run: go vet ./...
+      # -race detecta carreras de datos; -cover da el % de sentencias ejecutadas.
+      - run: go test -race -cover ./...
+
+  # Equivale al job "build". Mismo Dockerfile multi-arquitectura, misma idea.
+  build:
+    needs: test
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.vars.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: vars
+        # GitLab da CI_COMMIT_SHORT_SHA gratis; aquí hay que recortarlo a mano.
+        run: echo "short_sha=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+      # QEMU es el seguro de vida: el Dockerfile cross-compila y no debería necesitarlo.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Token del job, igual que CI_REGISTRY_PASSWORD en GitLab: no hay secretos propios.
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          # Un solo manifest list para las dos arquitecturas.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ steps.vars.outputs.short_sha }}
+          tags: |
+            ghcr.io/llstrevensll/payplan:${{ steps.vars.outputs.short_sha }}
+            ghcr.io/llstrevensll/payplan:latest
+
+  # Equivale a "deploy-dev": reescribe el tag y hace push. Argo CD hace el resto.
+  deploy-dev:
+    needs: build
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: http://localhost:18080
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump dev image tag
+        env:
+          SHA: ${{ needs.build.outputs.short_sha }}
+        run: |
+          git config user.email "ci@payplan.local"
+          git config user.name "payplan ci"
+          sed -i "s|newTag: [^ ]*|newTag: $SHA|" deploy/overlays/dev/kustomization.yaml
+          git add deploy/overlays/dev/kustomization.yaml
+          # Si el tag ya apuntaba a este commit, salir en verde.
+          if git diff --cached --quiet; then echo "el tag ya estaba en $SHA"; exit 0; fi
+          # [skip ci] evita que este commit dispare otro pipeline: sin eso, bucle infinito.
+          git commit -m "Deploy $SHA to dev [skip ci]"
+          git push origin HEAD:main
+
+  # Equivale a "deploy-prod" con when: manual. En GitHub la puerta NO va en el YAML: se
+  # configura en Settings, Environments, production, marcando "Required reviewers".
+  deploy-prod:
+    needs: deploy-dev
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump prod image tag
+        env:
+          SHA: ${{ needs.build.outputs.short_sha }}
+        run: |
+          git config user.email "ci@payplan.local"
+          git config user.name "payplan ci"
+          sed -i "s|newTag: [^ ]*|newTag: $SHA|" deploy/overlays/prod/kustomization.yaml
+          git add deploy/overlays/prod/kustomization.yaml
+          if git diff --cached --quiet; then echo "el tag ya estaba en $SHA"; exit 0; fi
+          git commit -m "Deploy $SHA to prod [skip ci]"
+          git push origin HEAD:main

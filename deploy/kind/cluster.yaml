@@ -1,0 +1,10 @@
+# Cluster kind de un nodo. Mapea el NodePort 30080 del Service al puerto 18080 de tu Mac:
+#   curl localhost:18080/healthz
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 18080
+        protocol: TCP

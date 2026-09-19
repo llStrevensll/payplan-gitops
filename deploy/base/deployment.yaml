@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payplan-api
+  labels:
+    app.kubernetes.io/name: payplan-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payplan-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: payplan-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # Debe ser MAYOR que el timeout de Shutdown del servidor (20 s) para que termine limpio.
+      terminationGracePeriodSeconds: 30
+      # Solo hace falta si el paquete del registry es privado; con uno público, borra estas líneas.
+      imagePullSecrets:
+        - name: registry-pull
+      containers:
+        - name: api
+          image: ghcr.io/llstrevensll/payplan:dev
+          # Con tags únicos (el SHA del commit) IfNotPresent es correcto y evita jalar de más.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: GOMEMLIMIT                # ~85 % del límite de memoria: el GC trabaja antes del OOMKill
+              value: "110MiB"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi                   # sin límite de CPU a propósito: evita throttling en un servicio de latencia
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              sleep: { seconds: 5 }            # da tiempo a que el Endpoint se retire antes de recibir SIGTERM (K8s 1.30+)
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }

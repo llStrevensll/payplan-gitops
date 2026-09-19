@@ -1,0 +1,29 @@
+# Entorno local: Postgres 16 REAL (en este proyecto nunca se mockea la base de datos) + la API.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: payplan
+      POSTGRES_PASSWORD: payplan
+      POSTGRES_DB: payplan
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payplan -d payplan"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  api:
+    build: .
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://payplan:payplan@db:5432/payplan?sslmode=disable
+    ports: ["8080:8080"]
+    depends_on:
+      db:
+        condition: service_healthy   # la API arranca solo cuando Postgres acepta conexiones
+
+volumes:
+  pgdata:

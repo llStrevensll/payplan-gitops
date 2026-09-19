@@ -1,0 +1,10 @@
+# Sin PDB, un `kubectl drain` en un upgrade puede dejar cero réplicas.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: payplan-api
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payplan-api

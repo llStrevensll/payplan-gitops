@@ -1,0 +1,25 @@
+# Segunda Application, mismo repo y misma base, otra ruta y otro namespace. Así se modela un
+# entorno adicional en Argo CD: una Application por entorno apuntando a su propio overlay.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payplan-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:llStrevensll/payplan.git
+    targetRevision: main
+    path: deploy/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: payplan-prod
+  syncPolicy:
+    automated:
+      prune: true
+      # selfHeal también en prod: el estado deseado vive en git, no en kubectl.
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

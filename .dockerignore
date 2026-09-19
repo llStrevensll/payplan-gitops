@@ -1,0 +1,10 @@
+# Lo que no debe entrar al contexto del build: acelera el envío al daemon y evita que un
+# archivo local se cuele en la imagen.
+.git
+bin/
+cover.out
+*.test
+deploy/
+docs/
+ejemplos/
+.vscode/

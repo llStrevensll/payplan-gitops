@@ -1,0 +1,123 @@
+# Un solo archivo define el pipeline entero. Las fases corren en orden;
+# los jobs de una misma fase, en paralelo.
+stages:
+  - test
+  - build
+  - deploy-dev
+  - deploy-prod
+
+# Estas variables llegan TANTO al contenedor del job COMO a los de services.
+# Así recibe Postgres su usuario y su base al arrancar.
+variables:
+  POSTGRES_USER: payplan
+  POSTGRES_PASSWORD: payplan
+  POSTGRES_DB: payplan
+  # Ojo al host: "postgres", no "localhost". En GitLab cada service es un contenedor
+  # aparte en la misma red, alcanzable por su alias. En GitHub Actions era localhost
+  # porque allí los puertos se mapeaban al runner.
+  DATABASE_URL: "postgres://payplan:payplan@postgres:5432/payplan?sslmode=disable"
+
+test:
+  stage: test
+  image: golang:1.24          # el toolchain viene en la imagen: no hace falta un setup-go
+  services:
+    - name: postgres:16       # Postgres real, igual que en local
+      alias: postgres
+  script:                     # comandos de shell, no acciones de un marketplace
+    # Análisis estático: halla código que compila pero está mal (un %d con un string,
+    # código inalcanzable). Sale con 1 y corta el job antes de gastar tiempo en los tests.
+    - go vet ./...
+    # -race detecta carreras de datos (dos goroutines en la misma memoria sin sincronizar);
+    # -cover da el % de sentencias ejecutadas. El ./... es este paquete y los de abajo.
+    - go test -race -cover ./...
+  tags:
+    - saas-linux-small-amd64
+
+build:
+  stage: build
+  # needs hace el grafo explícito: build arranca en cuanto test termina, sin esperar la fase entera.
+  needs: [test]
+  tags:
+    - saas-linux-small-amd64
+  image: docker:28
+  services:
+    # Docker-in-Docker: un demonio efímero dentro del job. El runner lo corre privilegiado.
+    - docker:28-dind
+  variables:
+    # El cliente habla con el service "docker" por TLS; estas cuatro son el contrato de dind.
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: 1
+    DOCKER_CERT_PATH: "/certs/client"
+  rules:
+    # Solo en la rama por defecto: un merge request no debe publicar imágenes.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    # CI_REGISTRY_USER y CI_REGISTRY_PASSWORD son el token del job: no hay que crear secretos.
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    # binfmt registra los intérpretes de otras arquitecturas. Seguro de vida: nuestro Dockerfile
+    # cross-compila y no debería necesitarlo, pero si algún día aparece un RUN en la etapa final.
+    - docker run --privileged --rm tonistiigi/binfmt --install arm64
+    # buildx con TLS por variables de entorno no arranca: necesita un contexto de Docker.
+    - docker context create dind
+    # El driver por defecto no sabe multi-plataforma; docker-container sí.
+    - docker buildx create --use --driver docker-container --name multi dind
+    # Una sola publicación con un manifest list: sirve a tu kind arm64 y a un cluster Intel.
+    # --provenance=false: buildx genera atestaciones por defecto y el registry de GitLab las
+    # rechaza con "blob unknown to registry". GHCR sí las soporta.
+    - docker buildx build --platform linux/amd64,linux/arm64 --provenance=false
+      --build-arg VERSION=$CI_COMMIT_SHORT_SHA
+      --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+      --tag $CI_REGISTRY_IMAGE:latest
+      --push .
+    - docker buildx imagetools inspect $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+
+# El punto inicial oculta el job: no se ejecuta, solo se hereda con extends.
+.bump-tag:
+  tags:
+    - saas-linux-small-amd64
+  image: alpine:3.21
+  variables:
+    # No queremos el clon del runner: clonamos nosotros con el token que sí puede escribir.
+    GIT_STRATEGY: none
+  before_script:
+    - apk add --no-cache git
+  script:
+    - git clone --depth 1 --branch "$CI_DEFAULT_BRANCH" "https://oauth2:${GITLAB_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo
+    - cd repo
+    - git config user.email "ci@payplan.local"
+    - git config user.name "payplan ci"
+    - 'sed -i "s|newTag: [^ ]*|newTag: $CI_COMMIT_SHORT_SHA|" "deploy/overlays/$ENVIRONMENT/kustomization.yaml"'
+    - git add "deploy/overlays/$ENVIRONMENT/kustomization.yaml"
+    # Si el tag ya apuntaba a este commit no hay nada que hacer: salir en verde, no fallar.
+    - if git diff --cached --quiet; then echo "el tag ya estaba en $CI_COMMIT_SHORT_SHA"; exit 0; fi
+    # [skip ci] impide que este commit dispare otro pipeline. Sin eso: bucle infinito.
+    - git commit -m "Deploy $CI_COMMIT_SHORT_SHA to $ENVIRONMENT [skip ci]"
+    - git push origin "HEAD:$CI_DEFAULT_BRANCH"
+
+deploy-dev:
+  extends: .bump-tag
+  stage: deploy-dev
+  needs: [build]
+  variables:
+    ENVIRONMENT: dev
+  environment:
+    name: dev
+    url: http://localhost:18080
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy-prod:
+  extends: .bump-tag
+  stage: deploy-prod
+  needs: [deploy-dev]
+  variables:
+    ENVIRONMENT: prod
+  environment:
+    name: production
+    deployment_tier: production
+  rules:
+    # when: manual convierte el job en un botón en la UI de GitLab. El pipeline no lo corre solo.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual

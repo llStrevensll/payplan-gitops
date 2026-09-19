@@ -1,0 +1,24 @@
+# Application = "qué repo, qué ruta, a qué cluster/namespace y con qué política de sincronización".
+# Equivalente en Flux: GitRepository + Kustomization en un solo objeto.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payplan-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # al borrar la Application se borran también sus recursos
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:llStrevensll/payplan.git   # registrar una deploy key de solo lectura si el repo es privado
+    targetRevision: main
+    path: deploy/overlays/dev                          # Argo detecta kustomization.yaml y usa kustomize
+  destination:
+    server: https://kubernetes.default.svc             # el mismo cluster donde corre Argo CD
+    namespace: payplan
+  syncPolicy:
+    automated:
+      prune: true       # borra recursos que desaparecen de git
+      selfHeal: true    # revierte cambios hechos a mano con kubectl (drift)
+    syncOptions:
+      - CreateNamespace=true

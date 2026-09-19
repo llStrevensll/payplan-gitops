@@ -1,0 +1,9 @@
+{
+  "go.useLanguageServer": true,
+  "go.lintOnSave": "package",
+  "go.testFlags": ["-race", "-cover"],
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+  }
+}

@@ -1,0 +1,12 @@
+# Parche solo para dev/kind: expone la API en el NodePort 30080 (mapeado a localhost:18080).
+apiVersion: v1
+kind: Service
+metadata:
+  name: payplan-api
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080

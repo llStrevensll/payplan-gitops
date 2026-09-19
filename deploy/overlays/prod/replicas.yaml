@@ -1,0 +1,7 @@
+# Prod corre con más réplicas que dev. Un parche estratégico solo toca el campo que nombra.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payplan-api
+spec:
+  replicas: 3
